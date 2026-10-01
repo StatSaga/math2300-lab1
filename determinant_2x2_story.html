@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Why the 2×2 determinant is an area</title>
+<style>
+  :root {
+    --u: #2ca02c; --v: #ff7f0e; --t: #9467bd; --s: #d62728; --par: #1f77b4;
+    --ink: #111; --muted: #555; --line: #d8d8d8;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 12px; font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+         color: var(--ink); background: #fff; }
+  h1 { font-size: 1.25rem; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 10px; font-size: .95rem; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+  button { font: inherit; padding: 7px 16px; border: 1px solid #888; border-radius: 6px; background: #f4f4f4; cursor: pointer; }
+  button.primary { background: #1f77b4; color: #fff; border-color: #1f77b4; }
+  button:disabled { opacity: .4; cursor: default; }
+  .stepno { font-weight: 600; margin: 0 6px; }
+  .caption { font-size: 1.05rem; margin: 0 0 10px; min-height: 1.5em; }
+  .wrap { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
+  .pic { flex: 1 1 380px; max-width: 640px; border: 1px solid var(--line); border-radius: 6px; }
+  .pic svg { display: block; width: 100%; height: auto; }
+  .side { flex: 1 1 320px; min-width: 280px; font-size: 1.05rem; }
+  .side .ln { margin: 0 0 .55em; }
+  .cu { color: var(--u); } .cv { color: var(--v); } .ct { color: var(--t); }
+  .cs { color: var(--s); } .cp { color: var(--par); }
+  .mrow { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; font-size: 1.15rem; }
+  .mat { display: inline-flex; align-items: stretch; }
+  .mat .br { width: 8px; border: 2px solid #000; }
+  .mat .br.l { border-right: none; } .mat .br.r { border-left: none; }
+  .mat.bars .br { border-top: none; border-bottom: none; width: 4px; }
+  .mat.bars .br.l { border-right: none; } .mat.bars .br.r { border-left: none; }
+  .mat table { border-collapse: collapse; }
+  .mat td { padding: 3px 12px; text-align: center; font-size: 1.3rem; }
+  .entries { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line); font-size: .95rem; }
+  .entries input { width: 3.6em; font: inherit; padding: 3px 4px; }
+  .err { color: #b00020; margin-top: 6px; min-height: 1.2em; }
+  i { font-style: italic; }
+</style>
+</head>
+<body>
+<h1>Why the 2×2 determinant is the area of a parallelogram</h1>
+<p class="sub">Use Next and Back (or the left and right arrow keys) to build the picture one layer at a time.</p>
+
+<div class="bar">
+  <button id="back">◀ Back</button>
+  <button id="next" class="primary">Next ▶</button>
+  <span class="stepno" id="stepno"></span>
+  <button id="replay" style="display:none">↻ Replay sweep</button>
+</div>
+<p class="caption" id="caption"></p>
+
+<div class="wrap">
+  <div class="pic"><svg id="svg" role="img" aria-label="Determinant as area of a parallelogram"></svg></div>
+  <div class="side">
+    <div class="mrow" id="mrow"></div>
+    <div id="lines"></div>
+    <div class="entries">
+      Try your own matrix &nbsp;
+      <i>a</i> <input id="ia" type="number" step="any" value="3">
+      <i>b</i> <input id="ib" type="number" step="any" value="2">
+      <i>c</i> <input id="ic" type="number" step="any" value="1">
+      <i>d</i> <input id="id" type="number" step="any" value="3">
+      <button id="apply">Update</button>
+      <div class="err" id="err"></div>
+      <div style="color:#555">A = [ a b ; c d ] has columns u = (a, c) and v = (b, d). This picture needs a, b, c, d &gt; 0 and ad &gt; bc.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var COL = { u: "#2ca02c", v: "#ff7f0e", t: "#9467bd", s: "#d62728", par: "#1f77b4" };
+  var NSTEPS = 7, SWEEP_MS = 4500;
+  var st = { a: 3, b: 2, c: 1, d: 3, step: 1, frac: 1, token: 0 };
+
+  var CAPTIONS = [
+    "Start with the two column vectors of A.",
+    "A sends the unit square to the parallelogram spanned by u and v. What is its area?",
+    "Enclose the parallelogram in a rectangle.",
+    "Two triangles with base a+b and height c.",
+    "Two triangles with base c+d and height b.",
+    "Subtract the four triangles from the rectangle.",
+    "That area is the determinant of A."
+  ];
+
+  function fmt(x) { return String(Math.round(x * 100) / 100); }
+  function $(id) { return document.getElementById(id); }
+
+  /* ---------- SVG helpers (world coords, y up; screen y = -y) ---------- */
+  function pts(arr) { return arr.map(function (p) { return p[0] + "," + (-p[1]); }).join(" "); }
+  function poly(arr, fill, op, stroke) {
+    return '<polygon points="' + pts(arr) + '" fill="' + fill + '" fill-opacity="' + op + '" stroke="' + (stroke || fill) + '" stroke-opacity="' + Math.min(1, op + .25) + '" stroke-width="' + st.lw + '"/>';
+  }
+  function line(x1, y1, x2, y2, color, w, dash) {
+    return '<line x1="' + x1 + '" y1="' + (-y1) + '" x2="' + x2 + '" y2="' + (-y2) + '" stroke="' + color + '" stroke-width="' + w + '"' +
+      (dash ? ' stroke-dasharray="' + dash + '"' : '') + '/>';
+  }
+  function arrow(x1, y1, x2, y2, key, dash) {
+    return '<line x1="' + x1 + '" y1="' + (-y1) + '" x2="' + x2 + '" y2="' + (-y2) + '" stroke="' + COL[key] + '" stroke-width="' + st.lw * 1.8 +
+      '" marker-end="url(#m' + key + ')"' + (dash ? ' stroke-dasharray="' + st.lw * 3 + ' ' + st.lw * 2.5 + '"' : '') + '/>';
+  }
+  function text(x, y, str, color, size, anchor, weight) {
+    return '<text x="' + x + '" y="' + (-y) + '" fill="' + (color || "#111") + '" font-size="' + (size || st.f) + '" text-anchor="' + (anchor || "start") +
+      '" dominant-baseline="middle" font-family="system-ui, Arial, sans-serif"' + (weight ? ' font-weight="' + weight + '"' : '') + '>' + str + '</text>';
+  }
+  function ease(t) { return t * t * (3 - 2 * t); }
+
+  function drawSVG() {
+    var a = st.a, b = st.b, c = st.c, d = st.d, step = st.step, final = step === NSTEPS;
+    var W = a + b, H = c + d;
+    var x0 = -0.9, x1 = W + 1.5, y0 = -1.0, y1 = H + 0.9;
+    var vw = x1 - x0, vh = y1 - y0, big = Math.max(vw, vh);
+    st.f = big / 24; st.lw = big / 220;
+    var f = st.f, lw = st.lw, s = "";
+
+    s += '<defs>';
+    ['u', 'v'].forEach(function (k) {
+      s += '<marker id="m' + k + '" viewBox="0 0 4 4" refX="3" refY="2" markerWidth="4" markerHeight="4" orient="auto"><path d="M0,0 L4,2 L0,4 z" fill="' + COL[k] + '"/></marker>';
+    });
+    s += '</defs>';
+
+    // grid and axes
+    for (var i = 0; i <= Math.floor(x1); i++) s += line(i, y0, i, y1, "#ececec", lw * .6);
+    for (var j = 0; j <= Math.floor(y1); j++) s += line(x0, j, x1, j, "#ececec", lw * .6);
+    s += line(x0, 0, x1, 0, "#222", lw) + line(0, y0, 0, y1, "#222", lw);
+    for (i = 1; i <= Math.floor(x1); i++) s += text(i, -0.3, i, "#666", f * .75, "middle");
+    for (j = 1; j <= Math.floor(y1); j++) s += text(-0.2, j, j, "#666", f * .75, "end");
+
+    // unit square (steps 2 and 7)
+    if (step === 2 || final) {
+      s += poly([[0, 0], [1, 0], [1, 1], [0, 1]], "#888", .45, "#666");
+      s += text(.5, .5, "1", "#111", f * .9, "middle");
+    }
+
+    // parallelogram; in step 2 it is swept out by sliding a copy of v along u
+    if (step >= 2) {
+      var fr = step === 2 ? st.frac : 1;
+      var par = [[0, 0], [fr * a, fr * c], [fr * a + b, fr * c + d], [b, d]];
+      s += poly(par, COL.par, final ? .6 : .25);
+      if (fr < 1) {
+        s += arrow(fr * a, fr * c, fr * a + b, fr * c + d, 'v', true);
+      } else {
+        s += line(a, c, a + b, c + d, COL.v, lw * 1.2, lw * 1.5 + " " + lw * 2);
+        s += line(b, d, a + b, c + d, COL.u, lw * 1.2, lw * 1.5 + " " + lw * 2);
+        s += text(W / 2, H / 2, step < 6 ? "Area = ?" : "Area = <tspan font-style='italic'>ad</tspan> − <tspan font-style='italic'>bc</tspan>", "#111", f * 1.1, "middle");
+      }
+    }
+
+    // enclosing rectangle
+    if (step >= 3) {
+      s += '<polyline points="' + pts([[0, 0], [W, 0], [W, H], [0, H], [0, 0]]) + '" fill="none" stroke="#111" stroke-width="' + lw * 1.2 + '" stroke-dasharray="' + lw * 5 + ' ' + lw * 3 + '"/>';
+      s += text(W / 2, -0.55, "<tspan font-style='italic'>a</tspan> + <tspan font-style='italic'>b</tspan>", "#111", f, "middle");
+      s += text(W + 0.2, H / 2, "<tspan font-style='italic'>c</tspan> + <tspan font-style='italic'>d</tspan>", "#111", f, "start");
+    }
+
+    var sh = final ? .10 : .40;
+    if (step >= 4) {
+      s += poly([[0, 0], [W, 0], [a, c]], COL.t, sh) + poly([[0, H], [W, H], [b, d]], COL.t, sh);
+      s += line(a, 0, a, c, COL.t, lw * 1.3, lw * 3 + " " + lw * 2) + line(b, d, b, H, COL.t, lw * 1.3, lw * 3 + " " + lw * 2);
+      s += text(a - 0.3, c / 2, "<tspan font-style='italic'>c</tspan>", COL.t, f, "middle");
+      s += text(b + 0.25, d + c / 2, "<tspan font-style='italic'>c</tspan>", COL.t, f, "middle");
+    }
+    if (step >= 5) {
+      s += poly([[0, 0], [0, H], [b, d]], COL.s, sh) + poly([[W, 0], [W, H], [a, c]], COL.s, sh);
+      s += line(0, d, b, d, COL.s, lw * 1.3, lw * 3 + " " + lw * 2) + line(a, c, W, c, COL.s, lw * 1.3, lw * 3 + " " + lw * 2);
+      s += text(b / 2, d - 0.35, "<tspan font-style='italic'>b</tspan>", COL.s, f, "middle");
+      s += text(a + b / 2, c + 0.3, "<tspan font-style='italic'>b</tspan>", COL.s, f, "middle");
+    }
+
+    // vectors on top
+    s += arrow(0, 0, a, c, 'u') + arrow(0, 0, b, d, 'v');
+    s += text(a + 0.15, c - 0.4, "<tspan font-weight='bold'>u</tspan> = (" + fmt(a) + ", " + fmt(c) + ")", COL.u, f, "start");
+    s += text(b - 0.2, d + 0.3, "<tspan font-weight='bold'>v</tspan> = (" + fmt(b) + ", " + fmt(d) + ")", COL.v, f, "end");
+    if (step === 2) {
+      s += text(1.1, -0.45, "e<tspan font-size='" + f * .7 + "' dy='" + f * .2 + "'>1</tspan>", "#111", f, "start");
+      s += text(-0.55, 1.1, "e<tspan font-size='" + f * .7 + "' dy='" + f * .2 + "'>2</tspan>", "#111", f, "start");
+    }
+
+    var svg = $("svg");
+    svg.setAttribute("viewBox", x0 + " " + (-y1) + " " + vw + " " + vh);
+    svg.innerHTML = s;
+  }
+
+  /* ---------- Right panel ---------- */
+  function mat(ents, bars) {
+    var h = '<span class="mat' + (bars ? ' bars' : '') + '"><span class="br l"></span><table>';
+    for (var i = 0; i < 2; i++) {
+      h += '<tr>';
+      for (var j = 0; j < 2; j++) h += '<td class="' + (j === 0 ? 'cu' : 'cv') + '">' + ents[i][j] + '</td>';
+      h += '</tr>';
+    }
+    return h + '</table><span class="br r"></span></span>';
+  }
+  var V = function (x) { return "<i>" + x + "</i>"; };
+
+  function drawSide() {
+    var a = st.a, b = st.b, c = st.c, d = st.d, step = st.step, final = step === NSTEPS;
+    var sym = [[V("a"), V("b")], [V("c"), V("d")]];
+    var num = [[fmt(a), fmt(b)], [fmt(c), fmt(d)]];
+    var det = a * d - b * c;
+    var rows = '<span style="font-size:1.3rem"><i>A</i> =</span>' + mat(sym, false) + "=" + mat(num, false);
+    $("mrow").innerHTML = rows;
+
+    var L = [];
+    function ln(html, cls) { L.push('<div class="ln ' + (cls || "") + '">' + html + '</div>'); }
+    var apb = V("a") + "+" + V("b"), cpd = V("c") + "+" + V("d");
+
+    if (step === 1) {
+      ln("Columns of <i>A</i> are the vectors:");
+      ln("<b>u</b> = (" + V("a") + ", " + V("c") + ") = (" + fmt(a) + ", " + fmt(c) + ")", "cu");
+      ln("<b>v</b> = (" + V("b") + ", " + V("d") + ") = (" + fmt(b) + ", " + fmt(d) + ")", "cv");
+    } else if (!final) {
+      ln("<i>A</i><b>e</b><sub>1</sub> = <b>u</b>, &nbsp; <i>A</i><b>e</b><sub>2</sub> = <b>v</b>");
+      ln("<i>A</i> sends the unit square to the parallelogram");
+      if (step < 6) ln("Area of parallelogram = ?", "cp");
+      if (step >= 3) ln("Rectangle: (" + apb + ")(" + cpd + ") = " + fmt((a + b) * (c + d)));
+      if (step >= 4) ln("2 triangles, base " + apb + ", height " + V("c") + ": −(" + apb + ")" + V("c") + " = −" + fmt((a + b) * c), "ct");
+      if (step >= 5) ln("2 triangles, base " + cpd + ", height " + V("b") + ": −(" + cpd + ")" + V("b") + " = −" + fmt((c + d) * b), "cs");
+      if (step >= 6) {
+        ln("Area = (" + apb + ")(" + cpd + ") − (" + apb + ")" + V("c") + " − (" + cpd + ")" + V("b"));
+        ln("= " + V("ac") + " + " + V("ad") + " + " + V("bc") + " + " + V("bd") + " − " + V("ac") + " − " + V("bc") + " − " + V("bc") + " − " + V("bd"));
+        ln("= " + V("ad") + " − " + V("bc") + " = " + fmt(det), "cp");
+      }
+    } else {
+      ln("Unit square: area 1");
+      ln("Its image under <i>A</i>: area " + V("ad") + " − " + V("bc"), "cp");
+      ln('<span style="display:inline-flex;align-items:center;gap:6px">det <i>A</i> = ' + mat(sym, true) + " = " + mat(num, true) + '</span>');
+      ln("= " + V("ad") + " − " + V("bc") + " = " + fmt(a) + "·" + fmt(d) + " − " + fmt(b) + "·" + fmt(c) + " = <b>" + fmt(det) + "</b>", "cp");
+    }
+    $("lines").innerHTML = L.join("");
+  }
+
+  function render() {
+    drawSVG(); drawSide();
+    $("stepno").textContent = "Step " + st.step + " of " + NSTEPS;
+    $("caption").textContent = CAPTIONS[st.step - 1];
+    $("back").disabled = st.step === 1;
+    $("next").disabled = st.step === NSTEPS;
+    $("replay").style.display = st.step === 2 ? "" : "none";
+  }
+
+  /* ---------- Animation (step 2) ---------- */
+  function sweep() {
+    var token = ++st.token, t0 = null;
+    function frame(ts) {
+      if (token !== st.token) return;
+      if (t0 === null) t0 = ts;
+      var p = Math.min(1, (ts - t0) / SWEEP_MS);
+      st.frac = ease(p);
+      render();
+      if (p < 1) requestAnimationFrame(frame);
+    }
+    st.frac = 0; render();
+    requestAnimationFrame(frame);
+  }
+
+  function go(step, animate) {
+    st.token++;                       // cancels any running animation
+    st.step = Math.max(1, Math.min(NSTEPS, step));
+    st.frac = 1;
+    if (st.step === 2 && animate) sweep(); else render();
+  }
+
+  $("next").onclick = function () { go(st.step + 1, true); };
+  $("back").onclick = function () { go(st.step - 1, false); };
+  $("replay").onclick = function () { go(2, true); };
+  document.addEventListener("keydown", function (e) {
+    if (e.target && e.target.tagName === "INPUT") return;
+    if (e.key === "ArrowRight") go(st.step + 1, true);
+    if (e.key === "ArrowLeft") go(st.step - 1, false);
+  });
+
+  function apply() {
+    var a = parseFloat($("ia").value), b = parseFloat($("ib").value),
+        c = parseFloat($("ic").value), d = parseFloat($("id").value);
+    var ok = [a, b, c, d].every(function (x) { return isFinite(x) && x > 0; }) && a * d > b * c;
+    if (!ok) { $("err").textContent = "Need a, b, c, d > 0 and ad > bc for this picture."; return; }
+    $("err").textContent = "";
+    st.a = a; st.b = b; st.c = c; st.d = d;
+    go(st.step, false);
+  }
+  $("apply").onclick = apply;
+  ["ia", "ib", "ic", "id"].forEach(function (id) {
+    $(id).addEventListener("keydown", function (e) { if (e.key === "Enter") apply(); });
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>
